@@ -11,6 +11,10 @@ Given the following function code, its file's imports, and information about any
 3. Logic flaws - Are there any logical issues or edge cases not handled?
 4. Data flow - How does data move through this function?
 
+IMPORTANT: Dependency Order Analysis
+This function's dependencies (child functions) have already been analyzed, and their analysis is provided below.
+Always use this information to build a comprehensive analysis of the current function.
+
 When analyzing the function:
 1. Consider the behavior and security implications of all called functions
 2. Document how the function interacts with its child functions
@@ -35,7 +39,7 @@ File Imports:
 {imports}
 ```
 
-Child Functions Context:
+Child Functions Analysis:
 ```
 {child_functions_context}
 ```
@@ -44,6 +48,8 @@ Function Code:
 ```
 {code}
 ```
+
+Be thorough and precise, focusing on the function's actual behavior and its interaction with child functions.
 """
 
 # Generic Function Call Analysis Prompt

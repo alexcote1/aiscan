@@ -63,6 +63,39 @@ pip install -r requirements.txt
    - Ignore patterns for files/directories
    - Scanning rules and thresholds
 
+## How It Works
+
+The scanner operates in a carefully designed four-phase process to ensure thorough and efficient security analysis:
+
+### Phase 1: Function Extraction and Call Analysis
+- Extracts all functions from all code files
+- Identifies function calls within each function
+- Determines function entry points based on decorators and patterns
+- **Note:** Function extraction and call analysis are independent operations and can be performed in any order
+
+### Phase 2: Call Tree Construction
+- Builds a directed graph of function calls across all files
+- Determines the analysis order to respect dependencies (bottom-up)
+- Generates a call graph visualization for project understanding
+
+### Phase 3: Function Analysis
+- Analyzes all functions in dependency order
+- Ensures child functions (dependencies) are analyzed before their parents
+- Propagates child function context upward in the call tree
+- Builds a comprehensive understanding of each function's behavior
+
+### Phase 4: Security Analysis
+- Performs security analysis only on entry point functions
+- Leverages the analysis of all dependencies to provide context-aware security findings
+- Focuses scanning effort on the most vulnerable surface area - external entry points
+- Provides detailed security recommendations with high confidence
+
+This approach allows the scanner to:
+1. Understand the codebase structure and dependencies
+2. Follow the data flow through the application
+3. Provide context-aware security findings
+4. Focus analysis on the most security-critical parts of the application
+
 ## Usage
 
 Run the scanner on a directory using the following command:

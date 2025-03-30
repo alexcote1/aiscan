@@ -164,7 +164,7 @@ class CodeScanner:
                 imports='\n'.join(imports) if imports else "No imports"
             )
 
-            result = self.llm_client.call_llm(prompt, context=f"Function matching for {source_func}")
+            result = self.llm_client.call_llm(prompt, context=f"Function matching for {source_func}",no_drafting=True)
             
             matched_func = result.strip() if isinstance(result, str) else result.content.strip()
             return matched_func if matched_func in target_funcs else "NO_MATCH"
@@ -530,101 +530,35 @@ class CodeScanner:
         return order
 
     def analyze_function(self, file_path: Path, function: FileFunction, rabbit_mode: bool = False) -> List[SecurityFinding]:
-        """Analyze a single function using LM Studio."""
+        """Analyze a single function.
+        
+        This method has two main responsibilities:
+        1. Ensure all dependencies (called functions) are analyzed first (respecting dependency order)
+        2. Perform security analysis on the function
+        
+        Args:
+            file_path: Path to the file containing the function
+            function: The function to analyze
+            rabbit_mode: Whether to use deeper analysis
+            
+        Returns:
+            List of security findings for this function
+        """
         try:
             # Add line numbers to the function code
             numbered_code = self.add_line_numbers(function.code)
             
-            # If in rabbit mode, first get function analysis
-            if rabbit_mode:
-                # First ensure all child functions are analyzed
-                for called_func_name in function.function.called_functions:
-                    if called_func_name not in self.function_analyses:
-                        # Find the called function in our function list
-                        called_func = next((f for f in self.all_functions if f.function.name == called_func_name), None)
-                        if called_func:
-                            # Recursively analyze the child function
-                            child_findings = self.analyze_function(Path(called_func.file_path), called_func, rabbit_mode)
-                            # Store the findings but don't return them yet
-                            if child_findings:
-                                self.function_analyses[called_func_name] = {
-                                    "findings": child_findings,
-                                    "analysis": self.function_analyses.get(called_func_name, {})
-                                }
-                
-                # Now proceed with the current function's analysis
-                if function.function.name not in self.function_analyses:
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            # Build context from child function analyses
-                            child_context = []
-                            for called_func_name in function.function.called_functions:
-                                if called_func_name in self.function_analyses:
-                                    child_analysis = self.function_analyses[called_func_name]
-                                    if isinstance(child_analysis, dict):
-                                        child_context.append(f"""
-Child Function: {called_func_name}
-Summary: {child_analysis.get('analysis', {}).get('function_summary', 'Unknown')}
-Potential Vulnerabilities: {child_analysis.get('analysis', {}).get('potential_vulnerabilities', 'Unknown')}
-Logic Flaws: {child_analysis.get('analysis', {}).get('logic_flaws', 'Unknown')}
-Data Flow: {child_analysis.get('analysis', {}).get('data_flow', 'Unknown')}
-""")
-                            
-                            # Format the prompt with the code, imports, and child function context
-                            analysis_prompt = FUNCTION_ANALYSIS_PROMPT.format(
-                                code=numbered_code.replace('{', '{{').replace('}', '}}'),
-                                imports='\n'.join(function.function.imports) if function.function.imports else "No imports",
-                                child_functions_context='\n'.join(child_context) if child_context else "No child functions analyzed"
-                            )
-                            
-                            analysis_result = self.llm_client.call_llm(
-                                analysis_prompt, 
-                                response_format=FunctionAnalysis,
-                                context=f"Function analysis for {function.function.name}",
-                                no_drafting=True
-                            )
-                            
-                            self.function_analyses[function.function.name] = analysis_result
-                            
-                            # Now do call analysis
-                            call_analysis = self.analyze_function_calls(function)
-                            function.function.call_analysis = call_analysis
-                            
-                            # If we have call analysis, merge it with the function analysis based on line numbers
-                            if call_analysis and call_analysis.custom_calls:
-                                # Create a map of line numbers to function calls
-                                call_map = {call.line: call for call in call_analysis.custom_calls}
-                                
-                                # Split the function summary into lines
-                                summary_lines = analysis_result.function_summary.split('\n')
-                                
-                                # Insert call information after the relevant lines
-                                new_summary_lines = []
-                                for i, line in enumerate(summary_lines, 1):
-                                    new_summary_lines.append(line)
-                                    if i in call_map:
-                                        call = call_map[i]
-                                        new_summary_lines.append(f"  → Calls: {call.name} ({'imported' if call.is_imported else 'direct'})")
-                                
-                                # Update the function summary with the merged information
-                                analysis_result.function_summary = '\n'.join(new_summary_lines)
-                            
-                            break
-                        except Exception as e:
-                            console.print(f"\n[dim]Attempt {attempt + 1}/{max_retries} failed for {function.function.name}: {str(e)}[/dim]")
-                            if attempt == max_retries - 1:
-                                console.print(f"[yellow]Warning: Function analysis failed for {function.function.name} after {max_retries} attempts[/yellow]")
-                                self.function_analyses[function.function.name] = FunctionAnalysis(
-                                    function_summary="Analysis failed",
-                                    potential_vulnerabilities="Analysis failed",
-                                    logic_flaws="Analysis failed",
-                                    data_flow="Analysis failed"
-                                )
-                
-                function.function.analysis = self.function_analyses.get(function.function.name)
+            # First, ensure all child functions (dependencies) are analyzed
+            for called_func_name in function.function.called_functions:
+                if called_func_name not in self.function_analyses:
+                    # Find the called function in our function list
+                    called_func = next((f for f in self.all_functions if f.function.name == called_func_name), None)
+                    if called_func:
+                        # We need to analyze this dependency first, but only perform function analysis,
+                        # not security analysis (which will be handled by the parent when we call security_analysis_only)
+                        self.analyze_function_only(Path(called_func.file_path), called_func)
             
-            # Build called functions analysis context
+            # Build context from already analyzed child functions
             called_functions_analysis = []
             for called_func_name in function.function.called_functions:
                 # First check if we have an analysis for this function
@@ -634,10 +568,10 @@ Data Flow: {child_analysis.get('analysis', {}).get('data_flow', 'Unknown')}
                     if isinstance(called_analysis, dict):
                         called_functions_analysis.append(f"""
 Function: {called_func_name}
-Summary: {called_analysis.get('analysis', {}).get('function_summary', 'Unknown')}
-Potential Vulnerabilities: {called_analysis.get('analysis', {}).get('potential_vulnerabilities', 'Unknown')}
-Logic Flaws: {called_analysis.get('analysis', {}).get('logic_flaws', 'Unknown')}
-Data Flow: {called_analysis.get('analysis', {}).get('data_flow', 'Unknown')}
+Summary: {called_analysis.get('function_summary', 'Unknown')}
+Potential Vulnerabilities: {called_analysis.get('potential_vulnerabilities', 'Unknown')}
+Logic Flaws: {called_analysis.get('logic_flaws', 'Unknown')}
+Data Flow: {called_analysis.get('data_flow', 'Unknown')}
 """)
                     else:
                         called_functions_analysis.append(f"""
@@ -657,7 +591,7 @@ Logic Flaws: Unknown
 Data Flow: Unknown
 """)
             
-            # Then do security analysis
+            # Now perform security analysis
             prompt = SECURITY_PROMPT.format(
                 code=numbered_code,
                 called_functions_analysis="\n".join(called_functions_analysis) if called_functions_analysis else "No called functions analyzed yet.",
@@ -670,7 +604,7 @@ Data Flow: Unknown
                 no_drafting=True
             )
             
-            # Debug only if findings are present or in verbose mode
+            # Process the findings
             if result and result.findings:
                 # Filter out "No Security Vulnerability Found" findings
                 actual_findings = [
@@ -719,9 +653,111 @@ Data Flow: Unknown
             if not any(imported_func in str(e) for imported_func in function.function.imported_functions):
                 console.print(f"\n[red]Error analyzing function {function.function.name} in {file_path}: {str(e)}[/red]")
             return []
+            
+    def analyze_function_only(self, file_path: Path, function: FileFunction) -> None:
+        """Perform only function analysis (not security analysis) on a function.
+        
+        This is used to analyze dependencies before their parent functions.
+        
+        Args:
+            file_path: Path to the file containing the function
+            function: The function to analyze
+        """
+        try:
+            # Skip if this function has already been analyzed
+            if function.function.name in self.function_analyses:
+                return
+                
+            # Add line numbers to the function code
+            numbered_code = self.add_line_numbers(function.code)
+            
+            # First, ensure all child functions (dependencies) are analyzed
+            for called_func_name in function.function.called_functions:
+                if called_func_name not in self.function_analyses:
+                    # Find the called function in our function list
+                    called_func = next((f for f in self.all_functions if f.function.name == called_func_name), None)
+                    if called_func:
+                        # Recursively analyze the dependency
+                        self.analyze_function_only(Path(called_func.file_path), called_func)
+            
+            # Build context from child function analyses
+            child_context = []
+            for called_func_name in function.function.called_functions:
+                if called_func_name in self.function_analyses:
+                    child_analysis = self.function_analyses[called_func_name]
+                    if isinstance(child_analysis, dict):
+                        child_context.append(f"""
+Child Function: {called_func_name}
+Summary: {child_analysis.get('function_summary', 'Unknown')}
+Potential Vulnerabilities: {child_analysis.get('potential_vulnerabilities', 'Unknown')}
+Logic Flaws: {child_analysis.get('logic_flaws', 'Unknown')}
+Data Flow: {child_analysis.get('data_flow', 'Unknown')}
+""")
+                    else:
+                        child_context.append(f"""
+Child Function: {called_func_name}
+Summary: {child_analysis.function_summary}
+Potential Vulnerabilities: {child_analysis.potential_vulnerabilities}
+Logic Flaws: {child_analysis.logic_flaws}
+Data Flow: {child_analysis.data_flow}
+""")
+            
+            # Format the prompt with the code, imports, and child function context
+            analysis_prompt = FUNCTION_ANALYSIS_PROMPT.format(
+                code=numbered_code.replace('{', '{{').replace('}', '}}'),
+                imports='\n'.join(function.function.imports) if function.function.imports else "No imports",
+                child_functions_context='\n'.join(child_context) if child_context else "No child functions analyzed"
+            )
+            
+            # Make at most 3 attempts
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    analysis_result = self.llm_client.call_llm(
+                        analysis_prompt, 
+                        response_format=FunctionAnalysis,
+                        context=f"Function analysis for {function.function.name}",
+                        no_drafting=True
+                    )
+                    
+                    self.function_analyses[function.function.name] = analysis_result
+                    function.function.analysis = analysis_result
+                    
+                    break
+                except Exception as e:
+                    console.print(f"\n[dim]Attempt {attempt + 1}/{max_retries} failed for {function.function.name}: {str(e)}[/dim]")
+                    if attempt == max_retries - 1:
+                        console.print(f"[yellow]Warning: Function analysis failed for {function.function.name} after {max_retries} attempts[/yellow]")
+                        self.function_analyses[function.function.name] = FunctionAnalysis(
+                            function_summary="Analysis failed",
+                            potential_vulnerabilities="Analysis failed",
+                            logic_flaws="Analysis failed",
+                            data_flow="Analysis failed"
+                        )
+                        function.function.analysis = self.function_analyses[function.function.name]
+                        
+        except Exception as e:
+            console.print(f"\n[red]Error analyzing function {function.function.name} in {file_path}: {str(e)}[/red]")
+            self.function_analyses[function.function.name] = FunctionAnalysis(
+                function_summary="Analysis failed",
+                potential_vulnerabilities="Analysis failed",
+                logic_flaws="Analysis failed",
+                data_flow="Analysis failed"
+            )
+            function.function.analysis = self.function_analyses[function.function.name]
 
     def scan_directory(self, directory: str, csv_output: bool = False, rabbit_mode: bool = False):
-        """Scan a directory for security issues."""
+        """Scan a directory for security issues.
+        
+        The scanner operates in the following phases:
+        1. Function Extraction: Extract all functions from all files
+        2. Function Call Analysis: Find all function calls within each function
+           (Note: Phases 1 and 2 can be performed in any order - they're independent)
+        3. Function Analysis: Perform deep analysis on each function, in dependency order
+           (child functions must be analyzed before parent functions)
+        4. Security Analysis: Only performed on entry point functions, using the 
+           analysis results from their dependencies
+        """
         if not self.check_lm_studio_connection():
             sys.exit(1)
 
@@ -737,8 +773,9 @@ Data Flow: Unknown
             console.print("[yellow]No supported code files found in the specified directory.[/yellow]")
             return
 
-        # First phase: Extract all functions from all files
-        console.print("\n[bold cyan]Phase 1: Extracting Functions[/bold cyan]")
+        # First phase: Extract all functions from all files and their function calls
+        # Note: Function extraction and call analysis are independent operations
+        console.print("\n[bold cyan]Phase 1: Extracting Functions and Their Calls[/bold cyan]")
         self.all_functions = []  # Reset the all_functions list
         with Progress(
             SpinnerColumn(),
@@ -768,94 +805,68 @@ Data Flow: Unknown
         if hasattr(self, 'generate_call_graph') and self.generate_call_graph:
             draw_call_graph(call_tree, "project_call_graph.puml")
 
-        # Third phase: Security Analysis
-        console.print("\n[bold cyan]Phase 3: Security Analysis[/bold cyan]")
+        # Identify entry points
+        entry_points = [func for func in self.all_functions if func.function.is_entry_point]
+        console.print(f"\n[dim]Found {len(entry_points)} entry point functions[/dim]")
+
+        # Third phase: Perform function analysis in dependency order (for rabbit mode)
+        console.print("\n[bold cyan]Phase 3: Function Analysis[/bold cyan]")
         results = []
         analysis_errors = []
         
-        # Find orphaned functions in rabbit mode
-        orphaned_functions = []
-        if rabbit_mode:
-            orphaned_functions = self.find_orphaned_functions(self.all_functions, call_tree)
-            if orphaned_functions:
-                console.print(f"\n[yellow]Found {len(orphaned_functions)} orphaned functions across all files[/yellow]")
-                for func in orphaned_functions:
-                    console.print(f"[dim]• {func.function.name} in {func.file_path} (lines {func.function.start_line}-{func.function.end_line})[/dim]")
-
-        # First pass: Analyze all functions for function analysis in rabbit mode
-        if rabbit_mode:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console
-            ) as progress:
-                analysis_task = progress.add_task("Analyzing function behaviors...", total=len(analysis_order))
-                for func_name in analysis_order:
-                    try:
-                        file_func = next(f for f in self.all_functions if f.function.name == func_name)
-                        progress.update(analysis_task, description=f"Analyzing function '{file_func.function.name}' in {file_func.file_path}...")
-                        try:
-                            # Only do function analysis, not security analysis
-                            numbered_code = self.add_line_numbers(file_func.code)
-                            analysis_prompt = FUNCTION_ANALYSIS_PROMPT.format(
-                                code=numbered_code.replace('{', '{{').replace('}', '}}'),
-                                imports='\n'.join(file_func.function.imports) if file_func.function.imports else "No imports"
-                            )
-                            analysis_result = self.llm_client.call_llm(analysis_prompt, response_format=FunctionAnalysis)
-                            if hasattr(analysis_result, 'parsed'):
-                                self.function_analyses[file_func.function.name] = analysis_result
-                            elif hasattr(analysis_result, 'content'):
-                                # Try to parse the content as JSON
-                                try:
-                                    content = analysis_result.content.strip()
-                                    if content.startswith('```json'):
-                                        content = content[7:]
-                                    if content.endswith('```'):
-                                        content = content[:-3]
-                                    content = content.strip()
-                                    analysis_dict = json.loads(content)
-                                    self.function_analyses[file_func.function.name] = FunctionAnalysis(**analysis_dict)
-                                except (json.JSONDecodeError, ValueError) as e:
-                                    console.print(f"\n[dim]Warning: Could not parse function analysis result for {file_func.function.name}: {str(e)}[/dim]")
-                                    self.function_analyses[file_func.function.name] = FunctionAnalysis(
-                                        function_summary="Analysis failed",
-                                        potential_vulnerabilities="Analysis failed",
-                                        logic_flaws="Analysis failed",
-                                        data_flow="Analysis failed"
-                                    )
-                        except Exception as e:
-                            error_msg = f"Error analyzing function '{file_func.function.name}' in {file_func.file_path}: {str(e)}"
-                            analysis_errors.append(error_msg)
-                            console.print(f"[red]{error_msg}[/red]")
-                    except StopIteration:
-                        error_msg = f"Warning: Function '{func_name}' was found in call tree but not in extracted functions"
-                        analysis_errors.append(error_msg)
-                        console.print(f"[yellow]{error_msg}[/yellow]")
-                    progress.advance(analysis_task)
-
-        # Second pass: Security analysis on entry points and orphaned functions
+        # Always perform function analysis in dependency order
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console
         ) as progress:
-            security_task = progress.add_task("Performing security analysis...", total=len(analysis_order))
-            
+            analysis_task = progress.add_task("Analyzing function behaviors...", total=len(analysis_order))
             for func_name in analysis_order:
                 try:
                     file_func = next(f for f in self.all_functions if f.function.name == func_name)
-                    # Skip security analysis if not an entry point or orphaned function in rabbit mode
-                    if rabbit_mode and not file_func.function.is_entry_point and file_func not in orphaned_functions:
-                        progress.advance(security_task)
-                        continue
-                        
-                    progress.update(security_task, description=f"Analyzing function '{file_func.function.name}' in {file_func.file_path}...")
+                    progress.update(analysis_task, description=f"Analyzing function '{file_func.function.name}' in {file_func.file_path}...")
                     try:
-                        function_findings = self.analyze_function(Path(file_func.file_path), file_func, rabbit_mode)
-                        results.append({
-                            "file": file_func.file_path,
-                            "findings": [finding.model_dump() if hasattr(finding, 'model_dump') else finding.dict() for finding in function_findings]
-                        })
+                        # Only do function analysis, not security analysis yet
+                        numbered_code = self.add_line_numbers(file_func.code)
+                        
+                        # Build context from child function analyses if available
+                        child_context = []
+                        for called_func_name in file_func.function.called_functions:
+                            if called_func_name in self.function_analyses:
+                                child_analysis = self.function_analyses[called_func_name]
+                                if isinstance(child_analysis, dict):
+                                    child_context.append(f"""
+Child Function: {called_func_name}
+Summary: {child_analysis.get('function_summary', 'Unknown')}
+Potential Vulnerabilities: {child_analysis.get('potential_vulnerabilities', 'Unknown')}
+Logic Flaws: {child_analysis.get('logic_flaws', 'Unknown')}
+Data Flow: {child_analysis.get('data_flow', 'Unknown')}
+""")
+                                else:
+                                    child_context.append(f"""
+Child Function: {called_func_name}
+Summary: {child_analysis.function_summary}
+Potential Vulnerabilities: {child_analysis.potential_vulnerabilities}
+Logic Flaws: {child_analysis.logic_flaws}
+Data Flow: {child_analysis.data_flow}
+""")
+                            
+                        analysis_prompt = FUNCTION_ANALYSIS_PROMPT.format(
+                            code=numbered_code.replace('{', '{{').replace('}', '}}'),
+                            imports='\n'.join(file_func.function.imports) if file_func.function.imports else "No imports",
+                            child_functions_context='\n'.join(child_context) if child_context else "No child functions analyzed"
+                        )
+                        
+                        analysis_result = self.llm_client.call_llm(
+                            analysis_prompt, 
+                            response_format=FunctionAnalysis,
+                            context=f"Function analysis for {file_func.function.name}",
+                            no_drafting=True
+                        )
+                        
+                        self.function_analyses[file_func.function.name] = analysis_result
+                        file_func.function.analysis = analysis_result
+                        
                     except Exception as e:
                         error_msg = f"Error analyzing function '{file_func.function.name}' in {file_func.file_path}: {str(e)}"
                         analysis_errors.append(error_msg)
@@ -864,28 +875,36 @@ Data Flow: Unknown
                     error_msg = f"Warning: Function '{func_name}' was found in call tree but not in extracted functions"
                     analysis_errors.append(error_msg)
                     console.print(f"[yellow]{error_msg}[/yellow]")
+                progress.advance(analysis_task)
+
+        # Fourth phase: Security analysis on entry points only
+        console.print("\n[bold cyan]Phase 4: Security Analysis (Entry Points Only)[/bold cyan]")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            security_task = progress.add_task("Performing security analysis...", total=len(entry_points))
+            
+            for entry_point in entry_points:
+                progress.update(security_task, description=f"Analyzing entry point '{entry_point.function.name}' in {entry_point.file_path}...")
+                try:
+                    function_findings = self.analyze_function(Path(entry_point.file_path), entry_point, rabbit_mode)
+                    results.append({
+                        "file": entry_point.file_path,
+                        "findings": [finding.model_dump() if hasattr(finding, 'model_dump') else finding.dict() for finding in function_findings]
+                    })
+                except Exception as e:
+                    error_msg = f"Error analyzing function '{entry_point.function.name}' in {entry_point.file_path}: {str(e)}"
+                    analysis_errors.append(error_msg)
+                    console.print(f"[red]{error_msg}[/red]")
                 progress.advance(security_task)
 
-        # Add analysis errors and orphaned functions to results
+        # Add analysis errors to results
         if analysis_errors:
             results.append({
                 "file": "analysis_errors",
                 "errors": analysis_errors
-            })
-            
-        if rabbit_mode and orphaned_functions:
-            results.append({
-                "file": "orphaned_functions",
-                "orphaned_functions": [
-                    {
-                        "name": func.function.name,
-                        "file": func.file_path,
-                        "start_line": func.function.start_line,
-                        "end_line": func.function.end_line,
-                        "code": func.code
-                    }
-                    for func in orphaned_functions
-                ]
             })
 
         display_results(results, csv_output, rabbit_mode)
