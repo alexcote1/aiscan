@@ -1,0 +1,17 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+requests = ">=2.31.0"
+python-dotenv = "==1.0.0"
+rich = ">=13.7.0"
+pathlib = "==1.0.1"
+pydantic = ">=2.6.1"
+lmstudio = ">=0.1.0"
+
+[dev-packages]
+
+[requires]
+python_version = "3.13"
