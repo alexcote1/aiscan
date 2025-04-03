@@ -3,7 +3,7 @@ Prompts used for code analysis and security scanning.
 """
 
 # Function Analysis Prompt
-FUNCTION_ANALYSIS_PROMPT = """You are a code analysis expert responsible for understanding and documenting the behavior of functions.
+FUNCTION_ANALYSIS_PROMPT = """You are a secure code analysis expert responsible for understanding and documenting the behavior of functions and there potenial problems .
 
 Given the following function code, its file's imports, and information about any functions it calls, provide a detailed analysis of:
 1. Function summary - What does this function do?
@@ -33,7 +33,15 @@ When analyzing the function:
    - Document how data flows between this function and child functions
    - Note any transformations or validations of data
    - Highlight any potential data integrity issues
-
+8. When considering potential vulnerabilities, consider the following:
+   - SQL Injection
+   - Cross-Site Scripting (XSS)
+   - Cross-Site Request Forgery (CSRF)
+   - File Path Injection
+   - Command Injection
+   - Information Disclosure
+   - logic flaws (password complexity checking is too low, hardcoded secrets, etc.)
+   
 File Imports:
 ```
 {imports}
@@ -170,29 +178,18 @@ For each target function, provide:
 3. The matching criteria used
 4. Any relevant context that supports the match
 
-Return a JSON object with:
-{
-    "matches": [
-        {
-            "target": "libapi.exact_function_name",
-            "confidence": 95,
-            "criteria": ["exact_name", "module_prefix"],
-            "context": "relevant context"
-        }
-    ]
-}
 
-If no good matches are found, return {"matches": []}"""
+"""
 
 # Security Analysis Prompt
 SECURITY_PROMPT = """You are a security code analyzer with expertise in identifying high-confidence security issues. Your goal is to minimize both false positives and false negatives.
 
 Analysis Guidelines:
-1. Only report findings when you are highly confident (>90%% certainty) that there is a genuine security issue.
+1. Only report findings when you are highly confident (>70%% certainty) that there is a genuine security issue.
 2. If no security issues are found, return an empty findings array: {{"findings": []}}
 3. For each potential issue, consider:
    - Is this a clear and unambiguous security vulnerability?
-   - Can you provide specific evidence from the code?
+   - Can you provide specific evidence from the code or function analysis, even if its the lack of a mitigation?
    - Is the impact concrete and verifiable?
    - Is the fix clear and implementable?
 
@@ -203,8 +200,7 @@ Analysis Guidelines:
    - Issues that require assumptions about the runtime environment
    - Parameterized queries using proper database APIs
    - Safe string formatting when using proper database APIs
-   - ORM queries that use proper parameter binding
-   - "No Security Vulnerability Found" as a finding - if no issues are found, return an empty findings list
+
 
 5. When analyzing functions that call other functions:
    - Consider the security implications of all called functions
@@ -233,7 +229,7 @@ SQL Injection Detection Rules:
    - Using parameterized queries with placeholders
    - Using named parameters
    - Using ORM parameter binding
-   - Using proper database API methods for parameter binding
+
 
 2. UNSAFE PATTERNS (FLAG AS VULNERABILITY):
    - String concatenation in SQL queries
@@ -272,6 +268,8 @@ Focus Areas (only report if highly confident):
 11. Local File Inclusion (LFI) vulnerabilities
 12. Path traversal vulnerabilities
 13. File operation security
+14. logic flaws (password complexity checking is too low, hardcoded secrets, etc.)
+15. anything else that would justify a CVE without controversiality.
 
 Called Functions Analysis:
 {called_functions_analysis}
@@ -285,7 +283,7 @@ Code to analyze:
 {code}
 
 Only include findings where you have:
-1. Clear evidence in the code
+1. Clear evidence in the code or function analysis
 2. High confidence in the assessment
 3. Specific, actionable fixes
 4. Concrete security impact

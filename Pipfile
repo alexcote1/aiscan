@@ -10,6 +10,8 @@ rich = ">=13.7.0"
 pathlib = "==1.0.1"
 pydantic = ">=2.6.1"
 lmstudio = ">=0.1.0"
+openai = ">=1.12.0"
+openrouter = ">=0.1.0"
 
 [dev-packages]
 

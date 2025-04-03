@@ -17,7 +17,8 @@ from ..models.base import (
     FunctionExtractionResult,
     FunctionBoundary,
     FileFunction,
-    FunctionCallAnalysis
+    FunctionCallAnalysis,
+    FunctionMatchResponse
 )
 from ..utils.display import display_results
 from ..utils.llm_client import LLMClient
@@ -164,10 +165,24 @@ class CodeScanner:
                 imports='\n'.join(imports) if imports else "No imports"
             )
 
-            result = self.llm_client.call_llm(prompt, context=f"Function matching for {source_func}",no_drafting=True)
+            result = self.llm_client.call_llm(
+                prompt, 
+                response_format=FunctionMatchResponse,
+                context=f"Function matching for {source_func}",
+                no_drafting=True
+            )
             
-            matched_func = result.strip() if isinstance(result, str) else result.content.strip()
-            return matched_func if matched_func in target_funcs else "NO_MATCH"
+            # If we have matches, find the one with highest confidence
+            if result and result.matches:
+                # Sort matches by confidence in descending order
+                sorted_matches = sorted(result.matches, key=lambda x: x.confidence, reverse=True)
+                best_match = sorted_matches[0]
+                
+                # Only return the match if it's in our target functions list
+                if best_match.target in target_funcs:
+                    return best_match.target
+            
+            return "NO_MATCH"
         except Exception as e:
             console.print(f"\n[dim]Warning: LLM function matching failed: {str(e)}[/dim]")
             return "NO_MATCH"
@@ -501,7 +516,11 @@ class CodeScanner:
             # Extract function names from call_analysis
             called_functions = []
             if func.function.call_analysis and func.function.call_analysis.custom_calls:
-                called_functions = [call.name for call in func.function.call_analysis.custom_calls]
+                # Filter out library functions
+                called_functions = [
+                    call.name for call in func.function.call_analysis.custom_calls
+                    if not any(pattern in call.name for pattern in WELL_KNOWN_LIBRARY_PATTERNS)
+                ]
             call_tree[func.function.name] = called_functions
         return call_tree
 

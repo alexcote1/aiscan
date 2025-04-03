@@ -151,7 +151,7 @@ def display_results(results: List[Dict[str, Any]], csv_output: bool = False, rab
                 ]
                 
                 if rabbit_mode:
-                    analysis = finding.get("function_analysis", {})
+                    analysis = finding.get("function_analysis", {}) or {}
                     analysis_text = f"Summary: {analysis.get('function_summary', '')}\n"
                     analysis_text += f"Vulnerabilities: {analysis.get('potential_vulnerabilities', '')}\n"
                     analysis_text += f"Logic Flaws: {analysis.get('logic_flaws', '')}\n"
@@ -241,7 +241,7 @@ def _display_csv(results: List[Dict[str, Any]], rabbit_mode: bool = False):
                     ]
                     
                     if rabbit_mode:
-                        analysis = finding.get("function_analysis", {})
+                        analysis = finding.get("function_analysis", {}) or {}
                         row.extend([
                             analysis.get("function_summary", "").replace("\n", " ").replace(",", ";"),
                             analysis.get("potential_vulnerabilities", "").replace("\n", " ").replace(",", ";"),

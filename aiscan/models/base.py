@@ -62,4 +62,13 @@ class SecurityFinding(BaseModel):
     imported_from: Optional[str] = None  # Information about the imported function
 
 class SecurityAnalysis(BaseModel):
-    findings: List[SecurityFinding] 
+    findings: List[SecurityFinding]
+
+class FunctionMatch(BaseModel):
+    target: str
+    confidence: int
+    criteria: List[str]
+    context: str
+
+class FunctionMatchResponse(BaseModel):
+    matches: List[FunctionMatch] 

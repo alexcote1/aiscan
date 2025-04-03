@@ -1,19 +1,28 @@
 import json
 from typing import Any, Optional, Type, TypeVar
-import lmstudio as lms
 from rich.console import Console
 from rich.syntax import Syntax
-from ..config import LM_STUDIO_API_URL, MODEL_PARAMS
+from .llm_drivers import LLMDriver, LMStudioDriver, AzureOpenAIDriver, OpenRouterDriver
 
 T = TypeVar('T')
 
 class LLMClient:
-    def __init__(self, verbose: bool = False):
-        """Initialize the LLM client with LM Studio configuration."""
-        lms.get_default_client(api_host=LM_STUDIO_API_URL)
-        self.model = lms.llm(MODEL_PARAMS["model"],config={"contextLength": 12000, "contextOverflowPolicy": "stopAtLimit"})
+    def __init__(self, driver: str = "lmstudio", verbose: bool = False, **kwargs):
+        """Initialize the LLM client with the specified driver."""
         self.verbose = verbose
         self.console = Console()
+        
+        # Initialize the appropriate driver
+        if driver.lower() == "lmstudio":
+            self.driver = LMStudioDriver()
+        elif driver.lower() == "azure":
+            self.driver = AzureOpenAIDriver()
+        elif driver.lower() == "openrouter":
+            self.driver = OpenRouterDriver()
+        else:
+            raise ValueError(f"Unsupported LLM driver: {driver}")
+        
+        self.driver.initialize(**kwargs)
 
     def _clean_response_content(self, content: str) -> str:
         """Clean response content by removing markdown code blocks if present."""
@@ -39,7 +48,7 @@ class LLMClient:
         if hasattr(response, 'parsed'):
             if isinstance(response.parsed, response_format):
                 return response.parsed
-                        # If the response is a dictionary, convert it to the correct format
+            # If the response is a dictionary, convert it to the correct format
             if isinstance(response.parsed, dict):
                 try:
                     # First try direct model validation
@@ -116,7 +125,7 @@ class LLMClient:
             self.console.print(Syntax(json.dumps(response.parsed, indent=2), "json", theme="monokai"))
         self.console.print("\n")
 
-    def call_llm(self, prompt: str, response_format: Optional[Type[T]] = None, context: str = "", max_retries: int = 3, no_drafting: bool =False, **kwargs) -> Any:
+    def call_llm(self, prompt: str, response_format: Optional[Type[T]] = None, context: str = "", max_retries: int = 3, no_drafting: bool = False, **kwargs) -> Any:
         """
         Make a call to the LLM with the given prompt and optional response format.
         
@@ -125,6 +134,7 @@ class LLMClient:
             response_format: Optional Pydantic model class to parse the response into
             context: Optional context string for debug logging
             max_retries: Maximum number of retry attempts
+            no_drafting: Whether to disable drafting (if supported by the driver)
             **kwargs: Additional arguments to pass to the LLM call
             
         Returns:
@@ -136,14 +146,11 @@ class LLMClient:
                 if response_format:
                     kwargs["response_format"] = response_format
                 
-                # Configure draft model if specified in MODEL_PARAMS
-                config = {}
-                if "draftModel" in MODEL_PARAMS:
-                    if not no_drafting:
-                        config["draftModel"] = MODEL_PARAMS["draftModel"]
+                # Add no_drafting to kwargs
+                kwargs["no_drafting"] = no_drafting
                 
-                # Make the LLM call
-                result = self.model.respond(prompt, response_format=response_format, config=config)
+                # Make the LLM call using the driver
+                result = self.driver.call(prompt, **kwargs)
                 
                 # Print stats if available
                 if hasattr(result, 'stats'):
@@ -165,9 +172,4 @@ class LLMClient:
 
     def check_connection(self) -> bool:
         """Check if the LLM service is accessible."""
-        try:
-            test_prompt = "say a, nothing else"
-            self.call_llm(test_prompt)
-            return True
-        except Exception:
-            return False 
+        return self.driver.check_connection() 
