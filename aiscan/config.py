@@ -10,7 +10,7 @@ from aiscan.scanner.prompts import (
 )
 
 # LM Studio API Configuration
-LM_STUDIO_API_URL = "192.168.10.212:1234"
+LM_STUDIO_API_URL = "127.0.0.1:1234"
 
 # Model parameters
 MODEL_PARAMS = {
