@@ -17,7 +17,11 @@ def main():
     parser.add_argument("directory", help="Directory to scan")
     parser.add_argument("--csv", action="store_true", help="Output results in CSV format")
     parser.add_argument("--rabbit", action="store_true", help="Enable deep function analysis mode")
-    parser.add_argument("--call-graph", action="store_true", help="Generate PlantUML call graphs for each file")
+    parser.add_argument(
+        "--call-graph",
+        action="store_true",
+        help="Generate a single project call graph using PlantUML",
+    )
     parser.add_argument("--verbose", action="store_true", help="Show all LLM inputs and outputs")
     args = parser.parse_args()
 
