@@ -3,7 +3,7 @@ Prompts used for code analysis and security scanning.
 """
 
 # Function Analysis Prompt
-FUNCTION_ANALYSIS_PROMPT = """You are a secure code analysis expert responsible for understanding and documenting the behavior of functions and there potenial problems .
+FUNCTION_ANALYSIS_PROMPT = """You are a secure code analysis expert responsible for understanding and documenting the behavior of functions and their potential problems.
 
 Given the following function code, its file's imports, and information about any functions it calls, provide a detailed analysis of:
 1. Function summary - What does this function do?
